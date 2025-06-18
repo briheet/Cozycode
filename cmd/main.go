@@ -2,195 +2,179 @@ package main
 
 import (
 	"fmt"
-
+	"log"
 	"os"
 
 	"github.com/charmbracelet/bubbles/key"
 	"github.com/charmbracelet/bubbles/list"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
-	"github.com/common-nighthawk/go-figure"
 )
 
 var (
-	appStyle = lipgloss.NewStyle().Padding(1, 2)
-
-	titleStyle = lipgloss.NewStyle().
-			Foreground(lipgloss.Color("#FFFDF5")).
-			Background(lipgloss.Color("#25A065")).
-			Padding(0, 1)
-
-	headerStyle = lipgloss.NewStyle().
-			Bold(true).
-			Foreground(lipgloss.AdaptiveColor{Light: "#04B575", Dark: "#04B575"}).
-			MarginBottom(1).
-			Align(lipgloss.Center)
-
-	statusMessageStyle = lipgloss.NewStyle().
-				Foreground(lipgloss.AdaptiveColor{Light: "#04B575", Dark: "#04B575"}).
-				Render
+	headerStyle = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.AdaptiveColor{Light: "#04B575", Dark: "#04B575"})
+	appStyle    = lipgloss.NewStyle().Padding(1, 2)
 )
 
-type item struct {
-	title       string
-	description string
+// Level of Menu
+type screen int
+
+const (
+	screenMainMenu screen = iota
+	screenSubMenu
+)
+
+type item string
+
+func (i item) Title() string       { return string(i) }
+func (i item) Description() string { return "" }
+func (i item) FilterValue() string { return string(i) }
+
+type listKeyMap struct {
+	addLLMs key.Binding
+	quit    key.Binding
+	up      key.Binding
+	down    key.Binding
+	enter   key.Binding
 }
 
-func (i item) Title() string       { return i.title }
-func (i item) Description() string { return i.description }
-func (i item) FilterValue() string { return i.title }
+func newListKeymap() *listKeyMap {
+	return &listKeyMap{
+		addLLMs: key.NewBinding(key.WithKeys("a"), key.WithHelp("a", "add item")),
+		quit:    key.NewBinding(key.WithKeys("q", "ctrl+c"), key.WithHelp("q", "quit")),
+		enter:   key.NewBinding(key.WithKeys("enter", "return"), key.WithHelp("↵", "select item")),
+		up:      key.NewBinding(key.WithKeys("up", "k"), key.WithHelp("↑/k", "up")),
+		down:    key.NewBinding(key.WithKeys("down", "j"), key.WithHelp("↓/j", "down")),
+	}
+}
 
 type model struct {
 	list          list.Model
-	itemGenerator *randomItemGenerator
 	keys          *listKeyMap
-	delegateKeys  *delegateKeyMap
-	header        string
 	width         int
 	height        int
+	pwd           string
+	currentScreen screen
 }
 
-type listKeyMap struct {
-	toggleSpinner    key.Binding
-	toggleTitleBar   key.Binding
-	toggleStatusBar  key.Binding
-	togglePagination key.Binding
-	toggleHelpMenu   key.Binding
-	insertItem       key.Binding
-}
+func initialModel(dir string) model {
+	l := newMainMenuList()
 
-func newListKeyMap() *listKeyMap {
-	return &listKeyMap{
-		insertItem: key.NewBinding(
-			key.WithKeys("a"),
-			key.WithHelp("a", "add item"),
-		),
+	return model{
+		list:          l,
+		keys:          newListKeymap(),
+		pwd:           dir,
+		currentScreen: screenMainMenu,
 	}
 }
 
-func newModel() model {
-	var (
-		itemGenerator randomItemGenerator
-		delegateKeys  = newDelegateKeyMap()
-		listKeys      = newListKeyMap()
-	)
-
-	// Make initial list of items
-	const numItems = 1
-	items := make([]list.Item, numItems)
-	for i := range numItems {
-		items[i] = itemGenerator.next()
+func newMainMenuList() list.Model {
+	items := []list.Item{
+		item("Start prompting and building (Coding)"),
+		item("Add API keys for new agents (LLMs)"),
+		item("Exit (See ya)"),
 	}
+	l := list.New(items, list.NewDefaultDelegate(), 0, 0)
+	l.Title = headerStyle.Render("CozyCode")
+	return l
+}
 
-	// Setup list
-	delegate := newItemDelegate(delegateKeys)
-	groceryList := list.New(items, delegate, 0, 0)
-	groceryList.Title = "Choose your respective LLMs for code"
-	groceryList.Styles.Title = titleStyle
-	groceryList.AdditionalFullHelpKeys = func() []key.Binding {
-		return []key.Binding{
-			listKeys.toggleSpinner,
-			listKeys.insertItem,
-			listKeys.toggleTitleBar,
-			listKeys.toggleStatusBar,
-			listKeys.togglePagination,
-			listKeys.toggleHelpMenu,
+func newSubMenuList2() list.Model {
+	items := []list.Item{
+		item("Groq LLM"),
+	}
+	l := list.New(items, list.NewDefaultDelegate(), 0, 0)
+	l.Title = headerStyle.Render("Sub Menu")
+	return l
+}
+
+func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+
+	var cmd tea.Cmd
+
+	switch msg := msg.(type) {
+	case tea.WindowSizeMsg:
+		m.width = msg.Width
+		m.height = msg.Height
+		m.list.SetSize(msg.Width-4, msg.Height-6)
+
+	case tea.KeyMsg:
+		switch {
+		case key.Matches(msg, m.keys.quit):
+			return m, tea.Quit
+		case key.Matches(msg, m.keys.enter):
+
+			switch m.currentScreen {
+			case screenMainMenu:
+				switch m.list.SelectedItem().(item) {
+				case item("Start prompting and building (Coding)"):
+					m.list = newSubMenuList2()
+					m.list.SetSize(m.width-4, m.height-6)
+					m.currentScreen = screenSubMenu
+
+				case item("Add API keys for new agents (LLMs)"):
+					m.list = newSubMenuList2()
+					m.list.SetSize(m.width-4, m.height-6)
+					m.currentScreen = screenSubMenu
+
+				case item("Exit (See ya)"):
+					return m, tea.Quit
+
+				}
+
+			case screenSubMenu:
+				switch m.list.SelectedItem().(item) {
+				case item("Back"):
+					m.list = newMainMenuList()
+					m.list.SetSize(m.width-4, m.height-6)
+					m.currentScreen = screenMainMenu
+				}
+
+			}
+
 		}
 	}
 
-	return model{
-		list:          groceryList,
-		keys:          listKeys,
-		delegateKeys:  delegateKeys,
-		itemGenerator: &itemGenerator,
-		header:        "👋 Welcome to Cozycode!",
-	}
+	m.list, cmd = m.list.Update(msg)
+	return m, cmd
+}
+
+func (m model) View() string {
+	return appStyle.Render(m.list.View())
 }
 
 func (m model) Init() tea.Cmd {
+	return nil
+}
+
+func runTUI() error {
+
+	dir, err := os.Getwd()
+	if err != nil {
+		return err
+	}
+
+	p := tea.NewProgram(initialModel(dir), tea.WithAltScreen())
+	if _, err := p.Run(); err != nil {
+		return fmt.Errorf("unable to run tui program: %w", err)
+	}
 
 	return nil
 }
 
-func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
-	var cmds []tea.Cmd
-
-	switch msg := msg.(type) {
-	case tea.WindowSizeMsg:
-		h, v := appStyle.GetFrameSize()
-		m.width = msg.Width
-		m.height = msg.Height
-		m.list.SetSize(msg.Width-h, msg.Height-v-10)
-
-	case tea.KeyMsg:
-		// Don't match any of the keys below if we're actively filtering.
-		if m.list.FilterState() == list.Filtering {
-			break
-		}
-
-		switch {
-		case key.Matches(msg, m.keys.toggleSpinner):
-			cmd := m.list.ToggleSpinner()
-			return m, cmd
-
-		case key.Matches(msg, m.keys.toggleTitleBar):
-			v := !m.list.ShowTitle()
-			m.list.SetShowTitle(v)
-			m.list.SetShowFilter(v)
-			m.list.SetFilteringEnabled(v)
-			return m, nil
-
-		case key.Matches(msg, m.keys.toggleStatusBar):
-			m.list.SetShowStatusBar(!m.list.ShowStatusBar())
-			return m, nil
-
-		case key.Matches(msg, m.keys.togglePagination):
-			m.list.SetShowPagination(!m.list.ShowPagination())
-			return m, nil
-
-		case key.Matches(msg, m.keys.toggleHelpMenu):
-			m.list.SetShowHelp(!m.list.ShowHelp())
-			return m, nil
-
-		case key.Matches(msg, m.keys.insertItem):
-			m.delegateKeys.remove.SetEnabled(true)
-			newItem := m.itemGenerator.next()
-			insCmd := m.list.InsertItem(0, newItem)
-			statusCmd := m.list.NewStatusMessage(statusMessageStyle("Added " + newItem.Title()))
-			return m, tea.Batch(insCmd, statusCmd)
-		}
-	}
-
-	// This will also call our delegate's update function.
-	newListModel, cmd := m.list.Update(msg)
-	m.list = newListModel
-	cmds = append(cmds, cmd)
-
-	return m, tea.Batch(cmds...)
-}
-
-func (m model) View() string {
-
-	styledHeader := figure.NewFigure("Cozycode", "slant", true).String()
-	listView := m.list.View()
-
-	content := lipgloss.JoinVertical(lipgloss.Left, styledHeader, listView)
-	final := appStyle.Render(content)
-
-	return lipgloss.Place(
-		m.width,
-		m.height,
-		lipgloss.Left,
-		lipgloss.Left,
-		final,
-	)
-
-}
-
 func main() {
-	if _, err := tea.NewProgram(newModel(), tea.WithAltScreen()).Run(); err != nil {
-		fmt.Println("Error running program:", err)
+
+	closer, err := setupLog()
+	if err != nil {
+		log.Fatal(err)
 		os.Exit(-1)
 	}
 
+	if err := runTUI(); err != nil {
+		_ = closer()
+		log.Fatal(err)
+		os.Exit(-1)
+	}
+
+	_ = closer()
 }
