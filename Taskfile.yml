@@ -1,0 +1,13 @@
+# https://taskfile.dev
+
+version: '3'
+
+tasks:
+  build:
+    cmds:
+      - go build -o bin/cozyapp ./cmd
+
+  default:
+    cmds:
+      - task: build
+      - ./bin/cozyapp
